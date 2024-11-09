@@ -37,6 +37,8 @@ __global__ void image_dither_kernel(
         return;
     }
     const int i = row;
+    curandState rand_state;
+    curand_init(clock64(), i, 0, &rand_state);
     for (int j = 0; j < W; ++j) {
         const int target_flag = get_target_flag(i, j, W);
         const int idx = i * W + j;
@@ -45,26 +47,68 @@ __global__ void image_dither_kernel(
         const int new_pixel = (old_pixel < 0.5 ? 0 : 1);
         dithered_image[idx] = (new_pixel == 0 ? 0 : 1);
         const float quant_error = old_pixel - new_pixel;
-        if (j + 1 < W) {
-            const int next_idx = i * W + j + 1;
-            atomicAdd(&image[next_idx], quant_error * 7.0 / 16.0);
-            atomicAdd(&lock_flags[next_idx], 1);
+        int next_idx;
+        if (i + 1 == H) {
+            if (j + 1 < W) {
+                // add right
+                next_idx = idx + 1;
+                atomicAdd(&image[next_idx], quant_error);
+                atomicAdd(&lock_flags[next_idx], 1);
+            }
+            continue;
         }
-        if ((j - 1 >= 0) && (i + 1 < H)) {
-            const int next_idx = (i + 1) * W + j - 1;
-            atomicAdd(&image[next_idx], quant_error * 3.0 / 16.0);
+        // assert (i + 1 < H)
+        if (j == 0) {
+            // add right
+            next_idx = idx + 1;
+            atomicAdd(&image[next_idx], quant_error * 7.0f / 13.0f);
             atomicAdd(&lock_flags[next_idx], 1);
-        }
-        if (i + 1 < H) {
-            const int next_idx = (i + 1) * W + j;
-            atomicAdd(&image[next_idx], quant_error * 5.0 / 16.0);
+            // add bottom
+            next_idx = idx + W;
+            atomicAdd(&image[next_idx], quant_error * 5.0f / 13.0f);
             atomicAdd(&lock_flags[next_idx], 1);
-        }
-        if ((j + 1 < W) && (i + 1 < H)) {
-            const int next_idx = (i + 1) * W + j + 1;
-            atomicAdd(&image[next_idx], quant_error * 1.0 / 16.0);
+            // add bottom right
+            next_idx = idx + W + 1;
+            atomicAdd(&image[next_idx], quant_error * 1.0f / 13.0f);
             atomicAdd(&lock_flags[next_idx], 1);
+            continue;
         }
+        // assert (j > 0 && i + 1 < H)
+        if (j == W - 1) {
+            // add bottom left
+            next_idx = idx + W - 1;
+            atomicAdd(&image[next_idx], quant_error * 3.0f / 8.0f);
+            atomicAdd(&lock_flags[next_idx], 1);
+            // add bottom
+            next_idx = idx + W;
+            atomicAdd(&image[next_idx], quant_error * 5.0f / 8.0f);
+            atomicAdd(&lock_flags[next_idx], 1);
+            continue;
+        }
+        // assert (j + 1 < W && j > 0 && i + 1 < H)
+        float r_1 = curand_uniform(&rand_state);  // [0, 1]
+        r_1 = (r_1 - 0.5f) * 2.0f * 5.0f / 16.0f; // [-5/16, 5/16]
+        float r_2 = curand_uniform(&rand_state);  // [0, 1]
+        r_2 = (r_2 - 0.5f) * 2.0f * 1.0f / 16.0f; // [-1/16, 1/16]
+        float p_r_1 = old_pixel * r_1;
+        float p_r_2 = old_pixel * r_2;
+
+        // add right
+        next_idx = idx + 1;
+        atomicAdd(&image[next_idx], quant_error * (7.0 / 16.0 + p_r_1));
+        atomicAdd(&lock_flags[next_idx], 1);
+        // add bottom left
+        next_idx = idx + W - 1;
+        atomicAdd(&image[next_idx], quant_error * (3.0 / 16.0 + p_r_2));
+        atomicAdd(&lock_flags[next_idx], 1);
+        // add bottom
+        next_idx = idx + W;
+        atomicAdd(&image[next_idx], quant_error * (5.0 / 16.0 - p_r_1));
+        atomicAdd(&lock_flags[next_idx], 1);
+        // add bottom right
+        next_idx = idx + W + 1;
+        atomicAdd(&image[next_idx], quant_error * (1.0 / 16.0 - p_r_2));
+        atomicAdd(&lock_flags[next_idx], 1);
     }
 }
 
