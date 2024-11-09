@@ -1,0 +1,4 @@
+build/
+torch_dither.egg-info/
+.idea/
+*__pycache__/
