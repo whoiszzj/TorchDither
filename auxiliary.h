@@ -9,6 +9,7 @@
 #include <vector_types.h>
 #include <thrust/scan.h>
 #include <thrust/device_vector.h>
+#include <thrust/execution_policy.h>
 // Includes STD libs
 #include <vector>
 #include <string>
