@@ -7,6 +7,7 @@
 torch::Tensor image_dither_cuda(
         const int H,
         const int W,
+        const bool random_propagation,
         const float *image
 );
 

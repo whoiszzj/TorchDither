@@ -28,6 +28,7 @@ __device__ int get_target_flag(
 __global__ void image_dither_kernel(
         const int H,
         const int W,
+        const bool random_propagation,
         float *__restrict__ image,
         int *__restrict__ lock_flags,
         int *__restrict__ dithered_image
@@ -85,30 +86,50 @@ __global__ void image_dither_kernel(
             atomicAdd(&lock_flags[next_idx], 1);
             continue;
         }
-        // assert (j + 1 < W && j > 0 && i + 1 < H)
-        float r_1 = curand_uniform(&rand_state);  // [0, 1]
-        r_1 = (r_1 - 0.5f) * 2.0f * 5.0f / 16.0f; // [-5/16, 5/16]
-        float r_2 = curand_uniform(&rand_state);  // [0, 1]
-        r_2 = (r_2 - 0.5f) * 2.0f * 1.0f / 16.0f; // [-1/16, 1/16]
-        float p_r_1 = old_pixel * r_1;
-        float p_r_2 = old_pixel * r_2;
+        if (random_propagation) {
+            // assert (j + 1 < W && j > 0 && i + 1 < H)
+            float r_1 = curand_uniform(&rand_state);  // [0, 1]
+            r_1 = (r_1 - 0.5f) * 2.0f * 5.0f / 16.0f; // [-5/16, 5/16]
+            float r_2 = curand_uniform(&rand_state);  // [0, 1]
+            r_2 = (r_2 - 0.5f) * 2.0f * 1.0f / 16.0f; // [-1/16, 1/16]
+            float p_r_1 = old_pixel * r_1;
+            float p_r_2 = old_pixel * r_2;
 
-        // add right
-        next_idx = idx + 1;
-        atomicAdd(&image[next_idx], quant_error * (7.0 / 16.0 + p_r_1));
-        atomicAdd(&lock_flags[next_idx], 1);
-        // add bottom left
-        next_idx = idx + W - 1;
-        atomicAdd(&image[next_idx], quant_error * (3.0 / 16.0 + p_r_2));
-        atomicAdd(&lock_flags[next_idx], 1);
-        // add bottom
-        next_idx = idx + W;
-        atomicAdd(&image[next_idx], quant_error * (5.0 / 16.0 - p_r_1));
-        atomicAdd(&lock_flags[next_idx], 1);
-        // add bottom right
-        next_idx = idx + W + 1;
-        atomicAdd(&image[next_idx], quant_error * (1.0 / 16.0 - p_r_2));
-        atomicAdd(&lock_flags[next_idx], 1);
+            // add right
+            next_idx = idx + 1;
+            atomicAdd(&image[next_idx], quant_error * (7.0 / 16.0 + p_r_1));
+            atomicAdd(&lock_flags[next_idx], 1);
+            // add bottom left
+            next_idx = idx + W - 1;
+            atomicAdd(&image[next_idx], quant_error * (3.0 / 16.0 + p_r_2));
+            atomicAdd(&lock_flags[next_idx], 1);
+            // add bottom
+            next_idx = idx + W;
+            atomicAdd(&image[next_idx], quant_error * (5.0 / 16.0 - p_r_1));
+            atomicAdd(&lock_flags[next_idx], 1);
+            // add bottom right
+            next_idx = idx + W + 1;
+            atomicAdd(&image[next_idx], quant_error * (1.0 / 16.0 - p_r_2));
+            atomicAdd(&lock_flags[next_idx], 1);
+        } else {
+            // add right
+            next_idx = idx + 1;
+            atomicAdd(&image[next_idx], quant_error * (7.0 / 16.0));
+            atomicAdd(&lock_flags[next_idx], 1);
+            // add bottom left
+            next_idx = idx + W - 1;
+            atomicAdd(&image[next_idx], quant_error * (3.0 / 16.0));
+            atomicAdd(&lock_flags[next_idx], 1);
+            // add bottom
+            next_idx = idx + W;
+            atomicAdd(&image[next_idx], quant_error * (5.0 / 16.0));
+            atomicAdd(&lock_flags[next_idx], 1);
+            // add bottom right
+            next_idx = idx + W + 1;
+            atomicAdd(&image[next_idx], quant_error * (1.0 / 16.0));
+            atomicAdd(&lock_flags[next_idx], 1);
+        }
+
     }
 }
 
@@ -131,6 +152,7 @@ __global__ void scatter_coordinates(
 torch::Tensor image_dither_cuda(
         const int H,
         const int W,
+        const bool random_propagation,
         const float *image
 ) {
     // define the lock flags
@@ -144,7 +166,7 @@ torch::Tensor image_dither_cuda(
     cudaMalloc(&dithered_image, H * W * sizeof(int));
     cudaMemset(dithered_image, 0, H * W * sizeof(int));
 
-    image_dither_kernel << < (H + 255) / 256, 256 >> > (H, W, image_copy, lock_flags, dithered_image);
+    image_dither_kernel << < (H + 255) / 256, 256 >> > (H, W, random_propagation, image_copy, lock_flags, dithered_image);
     CHECK_CUDA;
 
     int *prefix_sum;
